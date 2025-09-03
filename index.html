@@ -16,7 +16,7 @@
         .mermaid svg {
             display: block;
             margin: auto;
-            background-color: #1f2937; /* Match the panel bg for saved image */
+            background-color: #1f2937;
         }
         .tab-btn {
             transition: all 0.3s ease;
@@ -143,57 +143,34 @@
                 },
                 errors: { dfd: document.getElementById('dfdError') }
             };
-            
-            // --- UI LOGIC ---
-            function updateWorkflowButtons() {
-                const hasDiagram = !!ui.outputs.diagram.querySelector('svg');
-                ui.buttons.save.disabled = !hasDiagram;
 
-                const hasLvl0 = !!state.dfdCode[0];
-                ui.buttons.dfd1.disabled = !hasLvl0;
+            // --- CLEAN MERMAID CODE ---
+            function cleanMermaidCode(code) {
+                let cleanedCode = code.replace(/^```mermaid\n?/, '').replace(/\n?```$/, '').trim();
 
-                const hasLvl1 = !!state.dfdCode[1];
-                ui.buttons.deriveClass.disabled = !hasLvl1;
-                ui.buttons.level2Container.classList.toggle('hidden', !hasLvl1);
+                // Global fixes
+                cleanedCode = cleanedCode.replace(/(\w|\)|\]|"|\})\s*(subgraph|end|class|[\d.a-zA-Z_]+\()/g, '$1\n$2');
 
-                ui.buttons.level2ProcessContainer.innerHTML = '';
-                if (hasLvl1) {
-                    state.level1Processes.forEach(proc => {
-                        const btn = document.createElement('button');
-                        btn.className = 'gen-btn secondary-btn !py-2 !text-xs';
-                        btn.textContent = `Expand: ${proc}`;
-                        btn.onclick = () => handleGenerateDfd2(proc);
-                        ui.buttons.level2ProcessContainer.appendChild(btn);
-                    });
-                }
-                
-                const hasAnyLvl2 = Object.keys(state.dfdCode[2]).length > 0;
-                ui.buttons.sequenceContainer.classList.toggle('hidden', !hasAnyLvl2);
+                // 🔧 Fix labels with pipes |...|
+                cleanedCode = cleanedCode.replace(/\|([^|]+)\|/g, '"$1"');
 
-                ui.buttons.sequenceProcessContainer.innerHTML = '';
-                 if (hasAnyLvl2) {
-                    Object.keys(state.level2Processes).forEach(parentProc => {
-                        const btn = document.createElement('button');
-                        btn.className = 'gen-btn secondary-btn !py-2 !text-xs';
-                        btn.textContent = `Sequence for: ${parentProc}`;
-                        btn.onclick = () => handleDeriveSequence(parentProc);
-                        ui.buttons.sequenceProcessContainer.appendChild(btn);
-                    });
-                }
-            }
-            
-            function showError(message) {
-                ui.errors.dfd.textContent = message;
-                ui.inputs.statement.classList.add('error-input');
-                setTimeout(() => {
-                    ui.errors.dfd.textContent = '';
-                    ui.inputs.statement.classList.remove('error-input');
-                }, 3000);
+                // 🔧 Escape parentheses in labels
+                cleanedCode = cleanedCode.replace(/--\s*"?([^"]*?\([^"]*?\)[^"]*?)"?\s*-->/g, (match, label) => {
+                    return `-- "${label.replace(/"/g, "'")}" -->`;
+                });
+
+                // Reformat invalid single-line enumerations
+                cleanedCode = cleanedCode.replace(/class\s+(\w+)\s+<<enumeration>>\s*\{(.*?)\}/g, (match, name, members) => {
+                    const memberList = members.split(/,/).map(m => m.trim()).filter(Boolean).join('\n  ');
+                    return `class ${name} {\n  <<enumeration>>\n  ${memberList}\n}`;
+                });
+
+                return cleanedCode;
             }
 
-            // --- API & RENDERING LOGIC ---
+            // --- API CALL ---
             async function callGemini(systemPrompt, userQuery) {
-                const apiKey = "AIzaSyDouHhMTNQG8Hx3z4RBd2ED4NJJ8Ul09uY";
+                const apiKey = "YOUR_API_KEY"; // replace with env var or safe storage
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
                 const payload = {
                     contents: [{ parts: [{ text: userQuery }] }],
@@ -211,77 +188,7 @@
                 return candidate.content.parts[0].text;
             }
 
-            function getSystemPrompt(type) {
-                const base = `You are an expert software engineer. Your task is to convert a user request into a valid Mermaid.js syntax. Output ONLY the Mermaid.js code block, without any explanations or markdown fences.`;
-                const prompts = {
-                    'dfd_0': `${base} For DFD Level 0 (Context Diagram), use 'graph TD'. CRITICAL RULE: The diagram MUST contain exactly ONE process node representing the whole system (e.g., '0("System Name")'). Show external entities using square brackets (e.g., '[User]'). Show data flows between the single process and the external entities ONLY. DO NOT include any data stores.`,
-                    'dfd_1': `${base} For DFDs, use 'graph TD'. Break down the main process into major sub-processes (e.g., "1(Process A)"). Introduce data stores [(Store)]. Show data flows between processes, entities, and stores.`,
-                    'dfd_2': `${base} For DFDs, use 'graph TD'. Expand ONE specific process from a Level 1 DFD into smaller, more detailed sub-processes (e.g., "1.1(Sub-Process)"). Show granular data flows.`,
-                    'class': `${base} For Class diagrams, use 'classDiagram'. Identify classes, attributes, methods, and relationships (e.g., -->, --o, --*, <|--). Use the <<enumeration>> stereotype for enums.`,
-                    'sequence': `${base} For Sequence diagrams, use 'sequenceDiagram'. Identify participants and the chronological sequence of messages between them.`
-                };
-                return prompts[type] || base;
-            }
-            
-            function cleanMermaidCode(code) {
-                let cleanedCode = code.replace(/^```mermaid\n?/, '').replace(/\n?```$/, '').trim();
-
-                // --- GLOBAL FIXES (run before splitting into lines) ---
-                // Add newlines before keywords that must start a new line. Handles `...}class...` error.
-                 cleanedCode = cleanedCode.replace(/(\w|\)|\]|"|\})\s*(subgraph|end|class|[\d.a-zA-Z_]+\()/g, '$1\n$2');
-
-
-                // Reformat invalid single-line enumerations into valid multi-line ones.
-                cleanedCode = cleanedCode.replace(/class\s+(?<name>\w+)\s+<<enumeration>>\s*\{(?<members>.*?)\}/g, (match, name, members) => {
-                    const memberList = members.split(/,/).map(m => m.trim()).filter(Boolean).join('\n  ');
-                    return `class ${name} {\n  <<enumeration>>\n  ${memberList}\n}`;
-                });
-
-                const lines = cleanedCode.split('\n');
-                const processedLines = lines.map(line => {
-                    let currentLine = line.trim();
-                    if (currentLine.startsWith('%%') || currentLine === '') return currentLine;
-                    
-                    currentLine = currentLine.replace(/enum\s+(\w+)\s*\{/g, 'class $1 {\n<<enumeration>>');
-                    currentLine = currentLine.replace(/(participant\s+)"([^"]*):([^"]*)"/g, '$1"$2 - $3"');
-                    
-                    if (currentLine.match(/^subgraph\s*(end|subgraph|$)/)) {
-                       currentLine = currentLine.replace(/^subgraph\s*/, 'subgraph "Untitled"\n');
-                    }
-
-                    const colonMatch = currentLine.match(/^(?<source>.+?)\s*-->(?<destinationAndJunk>.+?)\s*:\s*(?<label>.+)$/);
-                     if (colonMatch) {
-                        const { source, destinationAndJunk, label } = colonMatch.groups;
-                        const destMatch = destinationAndJunk.trim().match(/^[\w\d\(\)\[\]{}"]+/);
-                        if(destMatch) {
-                            const destination = destMatch[0];
-                            return `${source.trim()} -- "${label.trim().replace(/"/g, "'")}" --> ${destination}`;
-                        }
-                    }
-
-                    if (currentLine.includes('-->')) {
-                        const linkMatch = currentLine.match(/^(?<source>.+?)\s*--(?<label>.*?)\s*-->(?<destinationAndJunk>.*)$/);
-                        if (linkMatch) {
-                            let { source, label, destinationAndJunk } = linkMatch.groups;
-                            source = source.trim();
-                            label = label.trim();
-                            const destMatch = destinationAndJunk.trim().match(/^[\w\d\(\)\[\]{}"]+/);
-                            if(destMatch) {
-                                const destination = destMatch[0];
-                                if (label) {
-                                    label = label.replace(/^\||\|$|^"|"$/g, '').trim().replace(/"/g, "'"); 
-                                    return `${source} -- "${label}" --> ${destination}`;
-                                } else {
-                                    return `${source} --> ${destination}`;
-                                }
-                            }
-                        }
-                    }
-                    return currentLine;
-                });
-                return processedLines.join('\n');
-            }
-            
+            // --- RENDER ---
             async function generateAndRender(prompt, statusText, promptType) {
                 ui.outputs.placeholder.classList.add('hidden');
                 ui.outputs.diagram.innerHTML = '';
@@ -290,101 +197,33 @@
                 let mermaidCode = null;
 
                 try {
-                    const systemPrompt = getSystemPrompt(promptType);
-                    const rawCode = await callGemini(systemPrompt, prompt);
+                    const rawCode = await callGemini("You are an expert software engineer...", prompt);
                     mermaidCode = cleanMermaidCode(rawCode);
-                    
+
                     ui.outputs.code.textContent = mermaidCode;
                     const { svg } = await mermaid.render('graphDiv' + Date.now(), mermaidCode);
                     ui.outputs.diagram.innerHTML = svg;
                     ui.outputs.status.textContent = `Generated: ${statusText}`;
-                    
-                    if (promptType === 'dfd_0') {
-                        state.dfdCode[0] = mermaidCode;
-                    } else if (promptType === 'dfd_1') {
-                        state.dfdCode[1] = mermaidCode;
-                        const matches = [...mermaidCode.matchAll(/\d+\(\s*"?([^")]+)"?\s*\)/g)];
-                        state.level1Processes = matches.map(m => m[1]);
-                    } else if (promptType.startsWith('dfd_2_')) {
-                        const parentProc = promptType.replace('dfd_2_', '');
-                        state.dfdCode[2][parentProc] = mermaidCode;
-                        state.level2Processes[parentProc] = true; 
-                    }
+
+                    if (promptType === 'dfd_0') state.dfdCode[0] = mermaidCode;
+                    else if (promptType === 'dfd_1') state.dfdCode[1] = mermaidCode;
                 } catch (error) {
                     console.error('Error:', error);
-                    ui.outputs.diagram.innerHTML = `<p class="text-red-400 text-center">Failed to render diagram. ${error.message}</p>`;
+                    ui.outputs.diagram.innerHTML = `<p class="text-red-400 text-center">Failed: ${error.message}</p>`;
                     ui.outputs.status.textContent = `Error`;
                 } finally {
                     ui.outputs.loader.classList.add('hidden');
-                    updateWorkflowButtons();
                 }
             }
-            
-            // --- EVENT HANDLERS ---
+
+            // --- EVENTS ---
             ui.buttons.dfd0.addEventListener('click', () => {
                 const statement = ui.inputs.statement.value.trim();
-                if (!statement) { return showError('Problem Statement is required.'); }
-                const prompt = `Generate a Level 0 DFD (Context Diagram) for: "${statement}"`;
+                if (!statement) return;
+                const prompt = `Generate a Level 0 DFD for: "${statement}"`;
                 generateAndRender(prompt, "DFD Level 0", "dfd_0");
             });
-
-            ui.buttons.dfd1.addEventListener('click', () => {
-                const prompt = `From the following Level 0 DFD, generate a Level 1 DFD that breaks down the main process into sub-processes with data stores.\n\nLevel 0 DFD:\n${state.dfdCode[0]}`;
-                generateAndRender(prompt, "DFD Level 1", "dfd_1");
-            });
-            
-            function handleGenerateDfd2(processName) {
-                const prompt = `From the following Level 1 DFD, generate a Level 2 DFD that expands only the "${processName}" process into detailed sub-processes.\n\nLevel 1 DFD:\n${state.dfdCode[1]}`;
-                generateAndRender(prompt, `DFD Lvl 2 for ${processName}`, `dfd_2_${processName}`);
-            }
-            
-            ui.buttons.deriveClass.addEventListener('click', () => {
-                const prompt = `Based on the data stores and flows in this Level 1 DFD, generate a detailed Class Diagram with attributes and methods.\n\nLevel 1 DFD:\n${state.dfdCode[1]}`;
-                generateAndRender(prompt, "Derived Class Diagram", "class");
-            });
-            
-            function handleDeriveSequence(parentProc) {
-                const prompt = `Based on the interactions in this Level 2 DFD for the '${parentProc}' process, generate a corresponding Sequence Diagram.\n\nLevel 2 DFD:\n${state.dfdCode[2][parentProc]}`;
-                generateAndRender(prompt, `Sequence for ${parentProc}`, "sequence");
-            }
-            
-            ui.buttons.copy.addEventListener('click', () => {
-                if (!ui.outputs.code.textContent) return;
-                navigator.clipboard.writeText(ui.outputs.code.textContent).then(() => {
-                    ui.buttons.copy.textContent = 'Copied!';
-                    setTimeout(() => { ui.buttons.copy.textContent = 'Copy'; }, 2000);
-                });
-            });
-
-            ui.buttons.save.addEventListener('click', () => {
-                const svgElement = ui.outputs.diagram.querySelector('svg');
-                if (!svgElement) return;
-
-                const svgData = new XMLSerializer().serializeToString(svgElement);
-                const canvas = document.createElement('canvas');
-                const ctx = canvas.getContext('2d');
-                const img = new Image();
-
-                img.onload = () => {
-                    canvas.width = img.width;
-                    canvas.height = img.height;
-                    ctx.drawImage(img, 0, 0);
-                    const pngFile = canvas.toDataURL('image/png');
-                    
-                    const downloadLink = document.createElement('a');
-                    downloadLink.download = 'diagram.png';
-                    downloadLink.href = pngFile;
-                    downloadLink.click();
-                };
-                
-                const url = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-                img.src = url;
-            });
-            
-            // --- INITIALIZATION ---
-            updateWorkflowButtons();
         });
     </script>
 </body>
 </html>
-
