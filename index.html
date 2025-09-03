@@ -170,7 +170,7 @@
 
             // --- API CALL ---
             async function callGemini(systemPrompt, userQuery) {
-                const apiKey = "YOUR_API_KEY"; // replace with env var or safe storage
+                const apiKey = "AIzaSyBNkg_MDW1lgYGxzfKyMIt1Xjwa0brwZ-U"; // replace with env var or safe storage
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
                 const payload = {
                     contents: [{ parts: [{ text: userQuery }] }],
